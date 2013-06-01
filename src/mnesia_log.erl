@@ -225,6 +225,7 @@ sappend(Log, Term) ->
 %% Write commit records to the latest_log
 log(C) when  C#commit.disc_copies == [],
              C#commit.disc_only_copies  == [],
+             C#commit.external_copies  == [],
              C#commit.schema_ops == [] ->
     ignore;
 log(C) ->
@@ -247,8 +248,9 @@ log(C) ->
 %% Synced
 
 slog(C) when  C#commit.disc_copies == [],
-             C#commit.disc_only_copies  == [],
-             C#commit.schema_ops == [] ->
+              C#commit.disc_only_copies  == [],
+              C#commit.external_copies  == [],
+              C#commit.schema_ops == [] ->
     ignore;
 slog(C) ->
     case mnesia_monitor:use_dir() of
