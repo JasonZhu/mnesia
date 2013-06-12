@@ -1081,14 +1081,16 @@ db_init_chunk(external_copies, Tab, N) ->
     {_, Mod} = val({Tab, storage_type}), 
     db_init_chunk({external_copies, Mod}, Tab, N);
 db_init_chunk({external_copies, Mod}, Tab, N) ->
-    Mod:select(Tab, [{'_', [], ['$_']}], N);
+    % Mod:select(Tab, [{'_', [], ['$_']}], N);
+    Mod:init_chunk(Tab);
 db_init_chunk(disc_only_copies, Tab, N) ->
     dets:select(Tab, [{'_', [], ['$_']}], N);
 db_init_chunk(_, Tab, N) ->
     ets:select(Tab, [{'_', [], ['$_']}], N).
 
 db_chunk({external_copies, Mod}, State) ->
-    Mod:select(State);
+    % Mod:select(State);
+    Mod:db_chunk(State);
 db_chunk(disc_only_copies, State) ->
     dets:select(State);
 db_chunk(_, State) ->
