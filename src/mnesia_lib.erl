@@ -42,6 +42,9 @@
 	 create_counter/1,
 	 cs_to_nodes/1,
 	 cs_to_storage_type/2,
+	 %%
+	 cs_to_external_mod/1,
+	 external_mod/1,
 	 dets_to_ets/6,
 	 db_chunk/2,
 	 db_init_chunk/1,
@@ -325,12 +328,22 @@ tab2dcl(Tab) ->  %% Disc copies log
 storage_type_at_node(Node, Tab) ->
     search_key(Node, [{disc_copies, val({Tab, disc_copies})},
 		      {ram_copies, val({Tab, ram_copies})},
-		      {disc_only_copies, val({Tab, disc_only_copies})}]).
+		      {disc_only_copies, val({Tab, disc_only_copies})},
+              {external_copies, val({Tab, external_copies})}]).
+
 
 cs_to_storage_type(Node, Cs) ->
     search_key(Node, [{disc_copies, Cs#cstruct.disc_copies},
 		      {ram_copies, Cs#cstruct.ram_copies},
-		      {disc_only_copies, Cs#cstruct.disc_only_copies}]).
+		      {disc_only_copies, Cs#cstruct.disc_only_copies},
+		      {external_copies, Cs#cstruct.external_copies}]).
+
+%%
+cs_to_external_mod(Cs) ->
+	Cs#cstruct.external_mod.
+
+external_mod(Tab) ->
+	val({Tab, external_mod}).
 
 schema_cs_to_storage_type(Node, Cs) ->
     case cs_to_storage_type(Node, Cs) of
@@ -553,6 +566,7 @@ read_counter(Name) ->
     ?ets_lookup_element(mnesia_stats, Name, 2).
 
 cs_to_nodes(Cs) ->
+    Cs#cstruct.external_copies ++
     Cs#cstruct.disc_only_copies ++
     Cs#cstruct.disc_copies ++
     Cs#cstruct.ram_copies.
@@ -1055,18 +1069,32 @@ db_get(Tab, Key) ->
     db_get(val({Tab, storage_type}), Tab, Key).
 db_get(ram_copies, Tab, Key) -> ?ets_lookup(Tab, Key);
 db_get(disc_copies, Tab, Key) -> ?ets_lookup(Tab, Key);
-db_get(disc_only_copies, Tab, Key) -> dets:lookup(Tab, Key).
+db_get(disc_only_copies, Tab, Key) -> dets:lookup(Tab, Key);
+db_get(external_copies, Tab, Key) -> 
+    Mod = external_mod(Tab),
+    Mod:lookup(Tab, Key).
+
 
 db_init_chunk(Tab) ->
     db_init_chunk(val({Tab, storage_type}), Tab, 1000).
 db_init_chunk(Tab, N) ->
     db_init_chunk(val({Tab, storage_type}), Tab, N).
 
+
+db_init_chunk(external_copies, Tab, N) ->
+     Mod = external_mod(Tab),
+    % Mod:select(Tab, [{'_', [], ['$_']}], N);
+    Mod:init_chunk(Tab);
 db_init_chunk(disc_only_copies, Tab, N) ->
     dets:select(Tab, [{'_', [], ['$_']}], N);
 db_init_chunk(_, Tab, N) ->
     ets:select(Tab, [{'_', [], ['$_']}], N).
 
+db_chunk(external_copies, State) ->
+	%%TODO:
+	Mod = external_mod(Tab),
+    % Mod:select(State);
+    Mod:db_chunk(State);
 db_chunk(disc_only_copies, State) ->
     dets:select(State);
 db_chunk(_, State) ->
@@ -1077,7 +1105,11 @@ db_put(Tab, Val) ->
 
 db_put(ram_copies, Tab, Val) -> ?ets_insert(Tab, Val), ok;
 db_put(disc_copies, Tab, Val) -> ?ets_insert(Tab, Val), ok;
-db_put(disc_only_copies, Tab, Val) -> dets:insert(Tab, Val).
+db_put(disc_only_copies, Tab, Val) -> dets:insert(Tab, Val);
+db_put(external_copies, Tab, Val) -> 
+     Mod = external_mod(Tab),
+     Mod:insert(Tab, Val), ok.
+
 
 db_match_object(Tab, Pat) ->
     db_match_object(val({Tab, storage_type}), Tab, Pat).
@@ -1090,6 +1122,10 @@ db_match_object(Storage, Tab, Pat) ->
 	_ -> Res
     end.
 
+
+catch_match_object(external_copies, Tab, Pat) -> 
+     Mod = external_mod(Tab),
+    catch Mod:match_object(Tab, Pat);
 catch_match_object(disc_only_copies, Tab, Pat) ->
     catch dets:match_object(Tab, Pat);
 catch_match_object(_, Tab, Pat) ->
@@ -1107,16 +1143,37 @@ db_select(Storage, Tab, Pat) ->
 	_ -> Res
     end.
 
+
+catch_select(external_copies, Tab, Pat) ->
+    Mod = external_mod(Tab),
+    catch Mod:select(Tab, Pat);
 catch_select(disc_only_copies, Tab, Pat) ->
     catch dets:select(Tab, Pat);
 catch_select(_, Tab, Pat) ->
     catch ets:select(Tab, Pat).
 
+
+db_select_init(external_copies, Tab, Pat, Limit) ->
+     Mod = external_mod(Tab), 
+    case Mod:select(Tab, Pat, Limit) of
+      {Matches, Continuation} when is_list(Matches) ->
+        {Matches, {Mod, Continuation}};
+      R ->
+        R
+    end;
 db_select_init(disc_only_copies, Tab, Pat, Limit) ->
     dets:select(Tab, Pat, Limit);
 db_select_init(_, Tab, Pat, Limit) ->
     ets:select(Tab, Pat, Limit).
 
+
+db_select_cont(external_copies, {Mod, Cont}, _Ms) ->
+    case Mod:select(Cont) of
+      {Matches, Continuation} when is_list(Matches) ->
+        {Matches, {Mod, Continuation}};
+      R ->
+        R
+    end;
 db_select_cont(disc_only_copies, Cont0, Ms) ->
     Cont = dets:repair_continuation(Cont0, Ms),
     dets:select(Cont);
@@ -1133,13 +1190,21 @@ db_fixtable(disc_copies, Tab, Bool) ->
 db_fixtable(dets, Tab, Bool) ->
     dets:safe_fixtable(Tab, Bool);
 db_fixtable(disc_only_copies, Tab, Bool) ->
-    dets:safe_fixtable(Tab, Bool).
+    dets:safe_fixtable(Tab, Bool);
+db_fixtable(external_copies, Tab, Bool) ->
+    Mod = external_mod(Tab),
+    Mod:fixtable(Tab, Bool).
+
 
 db_erase(Tab, Key) ->
     db_erase(val({Tab, storage_type}), Tab, Key).
 db_erase(ram_copies, Tab, Key) -> ?ets_delete(Tab, Key), ok;
 db_erase(disc_copies, Tab, Key) -> ?ets_delete(Tab, Key), ok;
-db_erase(disc_only_copies, Tab, Key) -> dets:delete(Tab, Key).
+db_erase(disc_only_copies, Tab, Key) -> dets:delete(Tab, Key);
+db_erase(external_copies, Tab, Key) -> 
+     Mod = external_mod(Tab),
+     Mod:delete(Tab, Key).
+
 
 db_match_erase(Tab, '_') ->
     db_delete_all(val({Tab, storage_type}),Tab);
@@ -1147,41 +1212,65 @@ db_match_erase(Tab, Pat) ->
     db_match_erase(val({Tab, storage_type}), Tab, Pat).
 db_match_erase(ram_copies, Tab, Pat) -> ?ets_match_delete(Tab, Pat), ok;
 db_match_erase(disc_copies, Tab, Pat) -> ?ets_match_delete(Tab, Pat), ok;
-db_match_erase(disc_only_copies, Tab, Pat) -> dets:match_delete(Tab, Pat).
+db_match_erase(disc_only_copies, Tab, Pat) -> dets:match_delete(Tab, Pat);
+db_match_erase(external_copies, Tab, Pat) -> 
+    Mod = external_mod(Tab),
+    Mod:match_delete(Tab, Pat).
 
 db_delete_all(ram_copies, Tab) ->       ets:delete_all_objects(Tab);
 db_delete_all(disc_copies, Tab) ->      ets:delete_all_objects(Tab);
-db_delete_all(disc_only_copies, Tab) -> dets:delete_all_objects(Tab).
+db_delete_all(disc_only_copies, Tab) -> dets:delete_all_objects(Tab);
+db_delete_all(external_copies, Tab) -> 
+	 Mod = external_mod(Tab),
+	 Mod:delete_all_objects(Tab).
 
 db_first(Tab) ->
     db_first(val({Tab, storage_type}), Tab).
 db_first(ram_copies, Tab) -> ?ets_first(Tab);
 db_first(disc_copies, Tab) -> ?ets_first(Tab);
-db_first(disc_only_copies, Tab) -> dets:first(Tab).
+db_first(disc_only_copies, Tab) -> dets:first(Tab);
+db_first(external_copies, Tab) ->
+    Mod = external_mod(Tab),
+    Mod:first(Tab).
+
 
 db_next_key(Tab, Key) ->
     db_next_key(val({Tab, storage_type}), Tab, Key).
 db_next_key(ram_copies, Tab, Key) -> ?ets_next(Tab, Key);
 db_next_key(disc_copies, Tab, Key) -> ?ets_next(Tab, Key);
-db_next_key(disc_only_copies, Tab, Key) -> dets:next(Tab, Key).
+db_next_key(disc_only_copies, Tab, Key) -> dets:next(Tab, Key);
+db_next_key(external_copies, Tab, Key) -> 
+    Mod = external_mod(Tab),
+    Mod:next(Tab, Key).
+
 
 db_last(Tab) ->
     db_last(val({Tab, storage_type}), Tab).
 db_last(ram_copies, Tab) -> ?ets_last(Tab);
 db_last(disc_copies, Tab) -> ?ets_last(Tab);
-db_last(disc_only_copies, Tab) -> dets:first(Tab). %% Dets don't have order
+db_last(disc_only_copies, Tab) -> dets:first(Tab); %% Dets don't have order
+db_last(external_copies, Tab) -> 
+    Mod = external_mod(Tab),
+    Mod:last(Tab).
 
 db_prev_key(Tab, Key) ->
     db_prev_key(val({Tab, storage_type}), Tab, Key).
 db_prev_key(ram_copies, Tab, Key) -> ?ets_prev(Tab, Key);
 db_prev_key(disc_copies, Tab, Key) -> ?ets_prev(Tab, Key);
-db_prev_key(disc_only_copies, Tab, Key) -> dets:next(Tab, Key). %% Dets don't have order
+db_prev_key(disc_only_copies, Tab, Key) -> dets:next(Tab, Key); %% Dets don't have order
+db_prev_key(external_copies, Tab, Key) -> 
+    Mod = external_mod(Tab),
+    Mod:prev(Tab, Key).
 
 db_slot(Tab, Pos) ->
     db_slot(val({Tab, storage_type}), Tab, Pos).
 db_slot(ram_copies, Tab, Pos) -> ?ets_slot(Tab, Pos);
 db_slot(disc_copies, Tab, Pos) -> ?ets_slot(Tab, Pos);
-db_slot(disc_only_copies, Tab, Pos) -> dets:slot(Tab, Pos).
+db_slot(disc_only_copies, Tab, Pos) -> dets:slot(Tab, Pos);
+db_slot(external_copies, Tab, Pos) -> 
+    Mod = external_mod(Tab),
+    Mod:slot(Tab, Pos).
+
 
 db_update_counter(Tab, C, Val) ->
     db_update_counter(val({Tab, storage_type}), Tab, C, Val).
@@ -1190,13 +1279,19 @@ db_update_counter(ram_copies, Tab, C, Val) ->
 db_update_counter(disc_copies, Tab, C, Val) ->
     ?ets_update_counter(Tab, C, Val);
 db_update_counter(disc_only_copies, Tab, C, Val) ->
-    dets:update_counter(Tab, C, Val).
+    dets:update_counter(Tab, C, Val);
+db_update_counter(external_copies, Tab, C, Val) ->
+    Mod = val({Tab, external_mod}), 
+    Mod:update_counter(Tab, C, Val).
 
 db_erase_tab(Tab) ->
     db_erase_tab(val({Tab, storage_type}), Tab).
 db_erase_tab(ram_copies, Tab) -> ?ets_delete_table(Tab);
 db_erase_tab(disc_copies, Tab) -> ?ets_delete_table(Tab);
-db_erase_tab(disc_only_copies, _Tab) -> ignore.
+db_erase_tab(disc_only_copies, _Tab) -> ignore;
+db_erase_tab(external_copies, Tab) -> 
+    Mod = external_mod(Tab),
+    Mod:delete_table(Tab).
 
 %% assuming that Tab is a valid ets-table
 dets_to_ets(Tabname, Tab, File, Type, Rep, Lock) ->

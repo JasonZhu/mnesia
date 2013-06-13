@@ -440,9 +440,15 @@ insert(Tid, Storage, Tab, Key, Val, Op, InPlace, InitBy) ->
 	    Snmp = mnesia_tm:prepare_snmp(Tab, Key, [Item]),
 	    mnesia_tm:do_snmp(Tid, Snmp);
 
+	_ when Storage == external_copies ->
+	    mnesia_tm:do_update_op(Tid, Storage, Item),
+	    Snmp = mnesia_tm:prepare_snmp(Tab, Key, [Item]),
+	    mnesia_tm:do_snmp(Tid, Snmp);        
+
 	_ when Storage == unknown ->
 	    ignore
     end.
+
 
 disc_delete_table(Tab, Storage) ->
     case mnesia_monitor:use_dir() of
@@ -452,6 +458,9 @@ disc_delete_table(Tab, Storage) ->
 		    mnesia_monitor:unsafe_close_dets(Tab),
 		    Dat = mnesia_lib:tab2dat(Tab),
 		    file:delete(Dat);
+		Storage == external_copies ->
+			 Mod = mnesia_lib:external_mod(Tab),
+			 Mod:delete_table(Tab);
 		true ->
 		    DclFile = mnesia_lib:tab2dcl(Tab),
 		    case get({?MODULE,Tab}) of
@@ -471,6 +480,11 @@ disc_delete_table(Tab, Storage) ->
 	    ignore
     end.
 
+
+disc_delete_indecies(Tab, Cs, external_copies) ->
+	Mod = mnesia_lib:external_mod(Tab),
+    Indecies = Cs#cstruct.index,
+    Mod:delete_index(Tab, Indecies);
 disc_delete_indecies(_Tab, _Cs, Storage) when Storage /= disc_only_copies ->
     ignore;
 disc_delete_indecies(Tab, Cs, disc_only_copies) ->
@@ -497,6 +511,11 @@ insert_op(Tid, _, {op, rec, Storage, Item}, InPlace, InitBy) ->
     {{Tab, Key}, ValList, Op} = Item,
     insert(Tid, Storage, Tab, Key, ValList, Op, InPlace, InitBy);
 
+insert_op(_, _, {op, change_table_copy_type, _, FromS, ToS, _}, _, _) 
+  when 
+  		FromS == external_copies;
+       	ToS == external_copies ->
+    ignore;
 insert_op(Tid, _, {op, change_table_copy_type, N, FromS, ToS, TabDef}, InPlace, InitBy) ->
     Cs = mnesia_schema:list2cs(TabDef),
     Val = mnesia_schema:insert_cstruct(Tid, Cs, true), % Update ram only
@@ -662,6 +681,9 @@ insert_op(Tid, _, {op, create_table, TabDef}, InPlace, InitBy) ->
 						read_write),
 			    mnesia_log:unsafe_close_log(temp)
 		    end;
+
+        external_copies ->
+            ignore;
 		_ ->
 		    DetsProps = proplists:get_value(dets, StorageProps, []),
 
@@ -821,6 +843,7 @@ insert_op(Tid, _, {op, del_table_copy, Storage, Node, TabDef}, InPlace, InitBy) 
 	    insert_cstruct(Tid, Cs, true, InPlace, InitBy);
         Tab /= schema ->
 	    mnesia_controller:del_active_replica(Tab, Node),
+
 	    mnesia_lib:del({Tab, Storage}, Node),
 	    if
 		Node == node() ->
@@ -885,6 +908,9 @@ insert_op(Tid, _, {op, add_index, Pos, TabDef}, InPlace, InitBy) ->
 	    mnesia_index:init_indecies(Tab, Storage, [Pos]);
 	startup ->
 	    ignore;
+	_ when Storage == external_copies ->
+             Mod = mnesia_lib:external_mod(Tab),
+            Mod:add_index(Tab, [Pos]);
 	_  ->
 	    case val({Tab,where_to_read}) of
 		nowhere -> ignore;
@@ -902,6 +928,10 @@ insert_op(Tid, _, {op, del_index, Pos, TabDef}, InPlace, InitBy) ->
 	    mnesia_index:del_index_table(Tab, Storage, Pos);
 	startup ->
 	    ignore;
+
+    _ when Storage == external_copies ->
+        Mod = mnesia_lib:external_mod(Tab),
+        Mod:delete_index(Tab, [Pos]);
 	_ ->
 	    mnesia_index:del_index_table(Tab, Storage, Pos)
     end,
@@ -941,6 +971,10 @@ insert_op(Tid, _, {op, change_table_frag, _Change, TabDef}, InPlace, InitBy) ->
     Cs = mnesia_schema:list2cs(TabDef),
     insert_cstruct(Tid, Cs, true, InPlace, InitBy).
 
+
+%%
+open_files(_, external_copies, _, _) ->
+    true;
 open_files(Tab, Storage, UpdateInPlace, InitBy)
   when Storage /= unknown, Storage /= ram_copies ->
     case get({?MODULE, Tab}) of

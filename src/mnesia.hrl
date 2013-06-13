@@ -60,6 +60,8 @@
 		  ram_copies = [],                 % [Node]
 		  disc_copies = [],                % [Node]
 		  disc_only_copies = [],           % [Node]
+		  external_copies = [],            % [Node]
+		  external_mod = undefined,        % external model
 		  load_order = 0,                  % Integer
 		  access_mode = read_write,        % read_write | read_only
 		  majority = false,                % true | false
@@ -71,8 +73,8 @@
 		  user_properties = [],            % [Record]
 		  frag_properties = [],            % [{Key, Val]
 		  storage_properties = [],         % [{Key, Val]
-                  cookie = ?unique_cookie,         % Term
-                  version = {{2, 0}, []}}).        % {{Integer, Integer}, [Node]}
+          cookie = ?unique_cookie,         % Term
+          version = {{2, 0}, []}}).        % {{Integer, Integer}, [Node]}
 
 %% Record for the head structure in Mnesia's log files
 %% 
@@ -95,6 +97,7 @@
 		 ram_copies = [],
 		 disc_copies = [],
 		 disc_only_copies = [],
+		 external_copies = [],
 		 snmp = [],
 		 schema_ops = []
 		}).
@@ -102,7 +105,8 @@
 -record(decision, {tid,
 		   outcome, % presume_abort | committed
 		   disc_nodes,
-		   ram_nodes}).
+		   ram_nodes,
+		   external_nodes}).
 
 %% Maybe cyclic wait
 -record(cyclic, {node = node(),

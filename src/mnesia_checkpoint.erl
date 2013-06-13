@@ -700,6 +700,13 @@ tab2retainer({Tab, Name}) ->
     FlatName = lists:flatten(io_lib:write(Name)),
     mnesia_lib:dir(lists:concat([?MODULE, "_", Tab, "_", FlatName, ".RET"])).
 
+
+%%TODO
+retainer_create(_Cp, R, Tab, Name, external_copies) ->
+	Mod = mnesia_lib:external_mod(Tab),
+    {Tab, Name} = Mod:create_table({Tab, Name}, val({Tab, cstruct})),
+    dbg_out("Checkpoint retainer created ~p ~p~n", [Name, Tab]),
+    R#retainer{store = {external_copies, {Tab, Name}}, really_retain = true};
 retainer_create(_Cp, R, Tab, Name, disc_only_copies) ->
     Fname = tab2retainer({Tab, Name}),
     file:delete(Fname),
@@ -759,15 +766,26 @@ traverse_dcd({Cont, Recs}, Log, Fun) ->     %% trashed data??
 traverse_dcd(eof, _Log, _Fun) ->
     ok.
 
+
+
+%%TODO
+retainer_get({{external_copies, Mod}, Store}, Key) -> 
+    Mod:lookup(Store, Key);
 retainer_get({ets, Store}, Key) -> ?ets_lookup(Store, Key);
 retainer_get({dets, Store}, Key) -> dets:lookup(Store, Key).
 
+retainer_put({{external_copies, Mod}, Store}, Val) -> 
+    Mod:insert(Store, Val);
 retainer_put({ets, Store}, Val) -> ?ets_insert(Store, Val);
 retainer_put({dets, Store}, Val) -> dets:insert(Store, Val).
 
+retainer_first({{external_copies, Mod}, Store}) -> 
+    Mod:first(Store);
 retainer_first({ets, Store}) -> ?ets_first(Store);
 retainer_first({dets, Store}) -> dets:first(Store).
  
+retainer_next({{external_copies, Mod}, Store}, Key) -> 
+    Mod:next(Store, Key);
 retainer_next({ets, Store}, Key) -> ?ets_next(Store, Key);
 retainer_next({dets, Store}, Key) -> dets:next(Store, Key).
 
@@ -789,8 +807,14 @@ retainer_fixtable(Tab, Bool) when is_atom(Tab) ->
 retainer_fixtable({ets, Tab}, Bool) ->
     mnesia_lib:db_fixtable(ram_copies, Tab, Bool);
 retainer_fixtable({dets, Tab}, Bool) ->
-    mnesia_lib:db_fixtable(disc_only_copies, Tab, Bool).
+    mnesia_lib:db_fixtable(disc_only_copies, Tab, Bool);
+retainer_fixtable({external_copies, Tab}, Bool) ->
+    mnesia_lib:db_fixtable(external_copies, Tab, Bool).
 
+
+retainer_delete({external_copies, Store}) ->
+    % TODO: Mod:delete_table(Store)
+    ok;
 retainer_delete({ets, Store}) ->
     ?ets_delete_table(Store);
 retainer_delete({dets, Store}) ->
@@ -940,7 +964,7 @@ deactivate_tab(R) ->
 	Active = lists:member(node(), R#retainer.writers),
 	case R#retainer.store of
 	    undefined ->
-		ignore;
+			ignore;
 	    Store when Active == true ->
 		retainer_delete(Store);
 	    _ ->
