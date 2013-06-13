@@ -46,7 +46,7 @@
 	 cs_to_external_mod/1,
 	 external_mod/1,
 	 dets_to_ets/6,
-	 db_chunk/2,
+	 db_chunk/3,
 	 db_init_chunk/1,
 	 db_init_chunk/2,
 	 db_init_chunk/3,
@@ -1081,7 +1081,7 @@ db_init_chunk(Tab, N) ->
     db_init_chunk(val({Tab, storage_type}), Tab, N).
 
 
-db_init_chunk(external_copies, Tab, N) ->
+db_init_chunk(external_copies, Tab, _N) ->
      Mod = external_mod(Tab),
     % Mod:select(Tab, [{'_', [], ['$_']}], N);
     Mod:init_chunk(Tab);
@@ -1090,14 +1090,13 @@ db_init_chunk(disc_only_copies, Tab, N) ->
 db_init_chunk(_, Tab, N) ->
     ets:select(Tab, [{'_', [], ['$_']}], N).
 
-db_chunk(external_copies, State) ->
-	%%TODO:
+db_chunk(external_copies, Tab, State) ->
 	Mod = external_mod(Tab),
     % Mod:select(State);
     Mod:db_chunk(State);
-db_chunk(disc_only_copies, State) ->
+db_chunk(disc_only_copies, _Tab, State) ->
     dets:select(State);
-db_chunk(_, State) ->
+db_chunk(_, _Tab, State) ->
     ets:select(State).
 
 db_put(Tab, Val) ->

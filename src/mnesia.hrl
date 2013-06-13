@@ -105,8 +105,9 @@
 -record(decision, {tid,
 		   outcome, % presume_abort | committed
 		   disc_nodes,
-		   ram_nodes,
-		   external_nodes}).
+		   ram_nodes
+		   % ,external_nodes
+		   }).
 
 %% Maybe cyclic wait
 -record(cyclic, {node = node(),

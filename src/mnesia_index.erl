@@ -279,11 +279,11 @@ create_fun(Cont, Tab, Pos) ->
 	    Data = 
 		case Cont of
 		    {start, KeysPerChunk} ->
-			mnesia_lib:db_init_chunk(disc_only_copies, Tab, KeysPerChunk);
+			     mnesia_lib:db_init_chunk(disc_only_copies, Tab, KeysPerChunk);
 		    '$end_of_table' -> 
-			'$end_of_table';
+			     '$end_of_table';
 		    _Else ->
-			mnesia_lib:db_chunk(disc_only_copies, Cont)
+			     mnesia_lib:db_chunk(disc_only_copies, Tab, Cont)
 		end,
 	    case Data of
 		'$end_of_table' ->

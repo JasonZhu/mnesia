@@ -930,7 +930,7 @@ ets2dcd('$end_of_table', _Tab, _Log) ->
     ok;
 ets2dcd({Recs, Cont}, Tab, Log) ->
     ok = disk_log:log_terms(Log, Recs),
-    ets2dcd(mnesia_lib:db_chunk(ram_copies, Cont), Tab, Log).
+    ets2dcd(mnesia_lib:db_chunk(ram_copies, Tab, Cont), Tab, Log).
 
 dcd2ets(Tab) ->
     dcd2ets(Tab, mnesia_monitor:get_env(auto_repair)).

@@ -780,7 +780,7 @@ reader_funcs(UseDetsChunk, Tab, Storage, KeysPerTransfer) ->
     case UseDetsChunk of
 	false ->
 	    {fun() -> mnesia_lib:db_init_chunk(Storage, Tab, KeysPerTransfer) end,
-	     fun(Cont) -> mnesia_lib:db_chunk(Storage, Cont) end};
+	     fun(Cont) -> mnesia_lib:db_chunk(Storage,Tab, Cont) end};
 	true ->
 	    {fun() -> dets_bchunk(Tab, start) end,
 	     fun(Cont) -> dets_bchunk(Tab, Cont) end}
