@@ -55,6 +55,9 @@
 	 remote_select/4
 	]).
 
+%% external_mod
+-export([key_to_n/2, key_to_frag_name/2]).
+
 -include("mnesia.hrl").
 
 -define(OLD_HASH_MOD, mnesia_frag_old_hash).
@@ -865,7 +868,18 @@ make_add_frag(Tab, SortedNs) ->
 
     [NewOp] = mnesia_schema:make_create_table(NewCs2),
 
-    SplitOps = split(Tab, FH2, FromIndecies, FragNames, []),
+
+    %% SplitOps = split(Tab, FH2, FromIndecies, FragNames, []),
+	
+    SplitOps = case mnesia_lib:storage_type_at_node(val({Tab, where_to_read}), Tab) of
+    	external_copies ->
+    		Mod = mnesia_lib:external_mod(Tab),
+    		Mod:frag_split(?MODULE, Tab, FH2, FromIndecies, FragNames, []);
+    	_ ->
+    		split(Tab, FH2, FromIndecies, FragNames, [])
+    end,
+
+    
 
     Cs2 = replace_frag_hash(Cs, FH2),
     TabDef = mnesia_schema:vsn_cs2list(Cs2),

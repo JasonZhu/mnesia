@@ -343,7 +343,9 @@ cs_to_external_mod(Cs) ->
 	Cs#cstruct.external_mod.
 
 external_mod(Tab) ->
+	%%Node = val({Tab, where_to_read})
 	val({Tab, external_mod}).
+
 
 schema_cs_to_storage_type(Node, Cs) ->
     case cs_to_storage_type(Node, Cs) of

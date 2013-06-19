@@ -246,11 +246,11 @@ doit_loop(#state{coordinators=Coordinators,participants=Participants,supervisor=
 	    Pid =
 		case Protocol of
 		    asym_trans when node(Tid#tid.pid) /= node() ->
-			Args = [tmpid(From), Tid, Commit, DiscNs, RamNs],
-			spawn_link(?MODULE, commit_participant, Args);
+				Args = [tmpid(From), Tid, Commit, DiscNs, RamNs],
+				spawn_link(?MODULE, commit_participant, Args);
 		    _ when node(Tid#tid.pid) /= node() -> %% *_sym_trans
-			reply(From, {vote_yes, Tid}),
-			nopid
+				reply(From, {vote_yes, Tid}),
+				nopid
 		end,
 	    P = #participant{tid = Tid,
 			     pid = Pid,

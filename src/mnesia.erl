@@ -130,6 +130,8 @@
 	 remote_dirty_select/2                  % Not for public use
 	]).
 
+-export([oid/2]).
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -include("mnesia.hrl").
@@ -448,7 +450,9 @@ write_lock_table(Tab) ->
 
 lock_record(Tid, Ts, Tab, Key, LockKind) when is_atom(Tab) ->
     Store = Ts#tidstore.store,
-    Oid =  {Tab, Key},
+    % Oid =  {Tab, Key},
+    Oid =  oid(Tab, Key),
+
     case LockKind of
 	read ->
 	    mnesia_locker:rlock(Tid, Store, Oid);
@@ -535,7 +539,8 @@ write(Tid, Ts, Tab, Val, LockKind)
 	    ok;
 	tid ->
 	    Store = Ts#tidstore.store,
-	    Oid = {Tab, element(2, Val)},
+	    % Oid = {Tab, element(2, Val)},
+        Oid = oid(Tab, element(2, Val)),
 	    case LockKind of
 		write ->
 		    mnesia_locker:wlock(Tid, Store, Oid);
@@ -597,7 +602,8 @@ delete(Tid, Ts, Tab, Key, LockKind)
 	      ok;
 	  tid ->
 	      Store = Ts#tidstore.store,
-	      Oid = {Tab, Key},
+	      % Oid = {Tab, Key},
+          Oid = oid(Tab, Key),
 	      case LockKind of
 		  write ->
 		      mnesia_locker:wlock(Tid, Store, Oid);
@@ -716,7 +722,8 @@ read(Tid, Ts, Tab, Key, LockKind)
 	    ?ets_lookup(Tab, Key);
 	tid ->
 	    Store = Ts#tidstore.store,
-	    Oid = {Tab, Key},
+        % Oid = {Tab, Key},
+	    Oid = oid(Tab, Key),
 	    Objs =
 		case LockKind of
 		    read ->
@@ -2899,3 +2906,14 @@ put_activity_id(Activity) ->
     mnesia_tm:put_activity_id(Activity).
 put_activity_id(Activity,Fun) ->
     mnesia_tm:put_activity_id(Activity,Fun).
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% external_mod 
+oid(Tab, Key) ->
+    case val({Tab, storage_type}) of 
+        external_copies when is_tuple(Key) andalso tuple_size(Key) > 0 ->
+            {Tab, element(1, Key)};
+        _ ->
+            {Tab, Key}
+    end.
