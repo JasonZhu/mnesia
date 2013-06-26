@@ -2913,7 +2913,8 @@ put_activity_id(Activity,Fun) ->
 oid(Tab, Key) ->
     case val({Tab, storage_type}) of 
         external_copies when is_tuple(Key) andalso tuple_size(Key) > 0 ->
-            {Tab, element(1, Key)};
+            Mod = val({Tab, external_mod}),
+            Mod:oid(Tab, Key);
         _ ->
             {Tab, Key}
     end.

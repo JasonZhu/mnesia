@@ -239,27 +239,27 @@ doit_loop(#state{coordinators=Coordinators,participants=Participants,supervisor=
 		    reply(From, {new_tid, Tid, Etab}, S2)
 	    end;
 
-	{From, {ask_commit, Protocol, Tid, Commit, DiscNs, RamNs}} ->
-	    ?eval_debug_fun({?MODULE, doit_ask_commit},
-			    [{tid, Tid}, {prot, Protocol}]),
-	    mnesia_checkpoint:tm_enter_pending(Tid, DiscNs, RamNs),
-	    Pid =
-		case Protocol of
-		    asym_trans when node(Tid#tid.pid) /= node() ->
-				Args = [tmpid(From), Tid, Commit, DiscNs, RamNs],
-				spawn_link(?MODULE, commit_participant, Args);
-		    _ when node(Tid#tid.pid) /= node() -> %% *_sym_trans
-				reply(From, {vote_yes, Tid}),
-				nopid
-		end,
-	    P = #participant{tid = Tid,
-			     pid = Pid,
-			     commit = Commit,
-			     disc_nodes = DiscNs,
-			     ram_nodes = RamNs,
-			     protocol = Protocol},
-	    State2 = State#state{participants = gb_trees:insert(Tid,P,Participants)},
-	    doit_loop(State2);
+    {From, {ask_commit, Protocol, Tid, Commit, DiscNs, RamNs, Type}} -> 
+        ?eval_debug_fun({?MODULE, doit_ask_commit},
+                [{tid, Tid}, {prot, Protocol}]),
+        mnesia_checkpoint:tm_enter_pending(Tid, DiscNs, RamNs),
+        Pid =
+        case Protocol of
+            asym_trans when node(Tid#tid.pid) /= node() ->
+                Args = [tmpid(From), Tid, Commit, DiscNs, RamNs],
+                spawn_link(?MODULE, commit_participant, Args);
+            _ when node(Tid#tid.pid) /= node() -> %% *_sym_trans
+                reply(From, {vote_yes, Tid}),
+                nopid
+        end,
+        P = #participant{tid = Tid,
+                 pid = Pid,
+                 commit = Commit,
+                 disc_nodes = DiscNs,
+                 ram_nodes = RamNs,
+                 protocol = Protocol},
+        State2 = State#state{participants = gb_trees:insert(Tid,P,Participants)},
+        doit_loop(State2);
 
 	{Tid, do_commit} ->
 	    case gb_trees:lookup(Tid, Participants) of
@@ -830,7 +830,7 @@ execute_transaction(Fun, Args, Factor, Retries, Type) ->
 apply_fun(Fun, Args, Type) ->
     Result = apply(Fun, Args),
     case t_commit(Type) of
-	do_commit ->
+        do_commit ->
             {atomic, Result};
         do_commit_nested ->
             {nested_atomic, Result};
@@ -1410,13 +1410,13 @@ multi_commit(sym_trans, _Maj = [], Tid, CR, Store) ->
     rpc:abcast(DiscNs -- [node()], ?MODULE, {Tid, Outcome}),
     rpc:abcast(RamNs -- [node()], ?MODULE, {Tid, Outcome}),
     case Outcome of
-	do_commit ->
-	    mnesia_recover:note_decision(Tid, committed),
-	    do_dirty(Tid, Local),
-	    mnesia_locker:release_tid(Tid),
-	    ?MODULE ! {delete_transaction, Tid};
-	{do_abort, _Reason} ->
-	    mnesia_recover:note_decision(Tid, aborted)
+    	do_commit ->
+    	    mnesia_recover:note_decision(Tid, committed),
+    	    do_dirty(Tid, Local),
+    	    mnesia_locker:release_tid(Tid),
+    	    ?MODULE ! {delete_transaction, Tid};
+    	{do_abort, _Reason} ->
+    	    mnesia_recover:note_decision(Tid, aborted)
     end,
     ?eval_debug_fun({?MODULE, multi_commit_sym, post},
 		    [{tid, Tid}, {outcome, Outcome}]),
@@ -2056,17 +2056,29 @@ get_dirty_reply(Node, Res) ->
 ask_commit(Protocol, Tid, CR, DiscNs, RamNs) ->
     ask_commit(Protocol, Tid, CR, DiscNs, RamNs, [], no_local).
 
-ask_commit(Protocol, Tid, [Head | Tail], DiscNs, RamNs, WaitFor, Local) ->
+ask_commit(Protocol, Tid, [Head | Tail], DiscNs, RamNs, WaitFor, Local ) ->
     Node = Head#commit.node,
     if
-	Node == node() ->
-	    ask_commit(Protocol, Tid, Tail, DiscNs, RamNs, WaitFor, Head);
-	true ->
-	    Bin = opt_term_to_binary(Protocol, Head, DiscNs++RamNs),
-	    Msg = {ask_commit, Protocol, Tid, Bin, DiscNs, RamNs},
-	    {?MODULE, Node} ! {self(), Msg},
-	    ask_commit(Protocol, Tid, Tail, DiscNs, RamNs, [Node | WaitFor], Local)
+    Node == node() ->
+        ask_commit(Protocol, Tid, Tail, DiscNs, RamNs, WaitFor, Head);
+    true ->
+        Bin = opt_term_to_binary(Protocol, Head, DiscNs++RamNs),
+        Msg = {ask_commit, Protocol, Tid, Bin, DiscNs, RamNs},
+        {?MODULE, Node} ! {self(), Msg},
+        ask_commit(Protocol, Tid, Tail, DiscNs, RamNs, [Node | WaitFor], Local)
     end;
+% ask_commit(Protocol, Tid, [Head | Tail], DiscNs, RamNs, WaitFor, Local ) ->
+%     %% ask all node
+%     Node = Head#commit.node,
+%     Bin = opt_term_to_binary(Protocol, Head, DiscNs++RamNs),
+%     Msg = {ask_commit, Protocol, Tid, Bin, DiscNs, RamNs},
+%     {?MODULE, Node} ! {self(), Msg},
+%     if
+%     Node == node() ->
+%         ask_commit(Protocol, Tid, Tail, DiscNs, RamNs, WaitFor, Head);
+%     true ->
+%         ask_commit(Protocol, Tid, Tail, DiscNs, RamNs, [Node | WaitFor], Local)
+%     end;
 ask_commit(_Protocol, _Tid, [], _DiscNs, _RamNs, WaitFor, Local) ->
     {WaitFor, Local}.
 

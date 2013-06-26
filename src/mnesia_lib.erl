@@ -343,8 +343,13 @@ cs_to_external_mod(Cs) ->
 	Cs#cstruct.external_mod.
 
 external_mod(Tab) ->
-	%%Node = val({Tab, where_to_read})
-	val({Tab, external_mod}).
+    val({Tab, external_mod}).
+    % case val({Tab, where_to_read}) of
+    %     Self when Self == node() ->
+    %         val({Tab, external_mod});
+    %     Node ->
+    %         rpc:call(Node, mnesia_lib, val, [{Tab, external_mod}])
+    % end.
 
 
 schema_cs_to_storage_type(Node, Cs) ->
@@ -1109,7 +1114,7 @@ db_put(disc_copies, Tab, Val) -> ?ets_insert(Tab, Val), ok;
 db_put(disc_only_copies, Tab, Val) -> dets:insert(Tab, Val);
 db_put(external_copies, Tab, Val) -> 
      Mod = external_mod(Tab),
-     Mod:insert(Tab, Val), ok.
+     Mod:insert(Tab, Val).
 
 
 db_match_object(Tab, Pat) ->

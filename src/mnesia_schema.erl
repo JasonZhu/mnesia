@@ -1842,7 +1842,7 @@ prepare_commit(Tid, Commit, WaitFor) ->
 	[] ->
 	    {false, Commit, optional};
 	OrigOps ->
-	    {Modified, Ops, DumperMode} =
+        {Modified, Ops, DumperMode} =
 		prepare_ops(Tid, OrigOps, WaitFor, false, [], optional),
 	    InitBy = schema_prepare,
 	    GoodRes = {Modified,
