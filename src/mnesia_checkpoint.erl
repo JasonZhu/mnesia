@@ -812,7 +812,7 @@ retainer_fixtable({external_copies, Tab}, Bool) ->
     mnesia_lib:db_fixtable(external_copies, Tab, Bool).
 
 
-retainer_delete({external_copies, Store}) ->
+retainer_delete({external_copies, _Store}) ->
     % TODO: Mod:delete_table(Store)
     ok;
 retainer_delete({ets, Store}) ->

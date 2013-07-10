@@ -239,7 +239,7 @@ doit_loop(#state{coordinators=Coordinators,participants=Participants,supervisor=
 		    reply(From, {new_tid, Tid, Etab}, S2)
 	    end;
 
-    {From, {ask_commit, Protocol, Tid, Commit, DiscNs, RamNs, Type}} -> 
+    {From, {ask_commit, Protocol, Tid, Commit, DiscNs, RamNs}} -> 
         ?eval_debug_fun({?MODULE, doit_ask_commit},
                 [{tid, Tid}, {prot, Protocol}]),
         mnesia_checkpoint:tm_enter_pending(Tid, DiscNs, RamNs),
