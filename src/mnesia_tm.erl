@@ -1471,13 +1471,10 @@ multi_commit(sym_trans, _Maj = [], Tid, CR, Store) ->
         DoOther ->
             DoOther
     end,
-    io:format("=====>mulit_commit FK ExtNs:~p~n", [ExtNs]),
     ?eval_debug_fun({?MODULE, multi_commit_sym},
 		    [{tid, Tid}, {outcome, Outcome}]),
     WaitForNs = send_ext_commit(ExtNs-- [node()], Tid, Outcome),
-    io:format("=====>mulit_commit FK WaitForNs:~p~n", [WaitForNs]),
     NsReturn = rec_ext_commit(WaitForNs, Tid, ok),
-    io:format("=====>mulit_commit FK res:~p~n", [NsReturn]),
     rpc:abcast(DiscNs -- [node()], ?MODULE, {Tid, Outcome}),
     rpc:abcast(RamNs -- [node()], ?MODULE, {Tid, Outcome}),
     Val = case Outcome of
