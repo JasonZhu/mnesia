@@ -35,3 +35,6 @@
 -callback db_chunk(State::term()) -> '$end_of_table' |{Date::term(), State::term()} | {error, Reason::term()}.
 
 
+-callback valid(Tab::atom(), Key::term()) -> ok | {error, Reason::term()}. %%TODO
+
+

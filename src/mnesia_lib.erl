@@ -79,6 +79,8 @@
 	 db_slot/3,
 	 db_update_counter/3,
 	 db_update_counter/4,
+     db_valid/2,
+     db_valid/3,
 	 dbg_out/2,
 	 del/2,
 	 dets_sync_close/1,
@@ -1115,6 +1117,13 @@ db_put(disc_only_copies, Tab, Val) -> dets:insert(Tab, Val);
 db_put(external_copies, Tab, Val) -> 
      Mod = external_mod(Tab),
      Mod:insert(Tab, Val).
+
+db_valid(Tab, Val) ->
+    db_valid(val({Tab, storage_type}), Tab, Val).
+db_valid(external_copies, Tab, Val) ->
+    Mod = external_mod(Tab), 
+    Mod:valid(Tab, Val);
+db_valid(_Other, _Tab, _Val) -> ok.
 
 
 db_match_object(Tab, Pat) ->
