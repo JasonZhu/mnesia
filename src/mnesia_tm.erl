@@ -242,24 +242,74 @@ doit_loop(#state{coordinators=Coordinators,participants=Participants,supervisor=
     {From, {ask_commit, Protocol, Tid, Commit, DiscNs, RamNs}} -> 
         ?eval_debug_fun({?MODULE, doit_ask_commit},
                 [{tid, Tid}, {prot, Protocol}]),
+
         mnesia_checkpoint:tm_enter_pending(Tid, DiscNs, RamNs),
-        Pid =
-        case Protocol of
-            asym_trans when node(Tid#tid.pid) /= node() ->
-                Args = [tmpid(From), Tid, Commit, DiscNs, RamNs],
-                spawn_link(?MODULE, commit_participant, Args);
-            _ when node(Tid#tid.pid) /= node() -> %% *_sym_trans
-                reply(From, {vote_yes, Tid}),
+       Pid = case do_valid(Tid, Commit) of
+            ok ->
+                
+                case Protocol of
+                    asym_trans when node(Tid#tid.pid) /= node() ->
+                        Args = [tmpid(From), Tid, Commit, DiscNs, RamNs],
+                        spawn_link(?MODULE, commit_participant, Args);
+                    _ when node(Tid#tid.pid) /= node() -> %% *_sym_trans
+                        reply(From, {vote_yes, Tid}),
+                        nopid
+                end;
+               
+            Err ->
+                reply(From, {vote_no, Tid, Err}),
                 nopid
         end,
-        P = #participant{tid = Tid,
-                 pid = Pid,
-                 commit = Commit,
-                 disc_nodes = DiscNs,
-                 ram_nodes = RamNs,
-                 protocol = Protocol},
+
+         P = #participant{tid = Tid,
+                         pid = Pid,
+                         commit = Commit,
+                         disc_nodes = DiscNs,
+                         ram_nodes = RamNs,
+                         protocol = Protocol},
         State2 = State#state{participants = gb_trees:insert(Tid,P,Participants)},
         doit_loop(State2);
+
+    %% ==> for external mod
+    {From, {Tid, do_commit} }->
+        case gb_trees:lookup(Tid, Participants) of
+        none ->
+            verbose("Tried to commit a non participant transaction ~p~n",[Tid]),
+            doit_loop(State);
+        {value, P} ->
+            ?eval_debug_fun({?MODULE,do_commit,pre},[{tid,Tid},{participant,P}]),
+            case P#participant.pid of
+            nopid ->
+                Commit = P#participant.commit,
+                Member = lists:member(node(), P#participant.disc_nodes),
+                if Member == false ->
+                    ignore;
+                   P#participant.protocol == sym_trans ->
+                    mnesia_log:log(Commit);
+                   P#participant.protocol == sync_sym_trans ->
+                    mnesia_log:slog(Commit)
+                end,
+                mnesia_recover:note_decision(Tid, committed),
+                Val = do_commit(Tid, Commit),
+                reply(From, {Tid, Val}),
+                if
+                P#participant.protocol == sync_sym_trans ->
+                    Tid#tid.pid ! {?MODULE, node(), {committed, Tid}};
+                true ->
+                    ignore
+                end,
+                mnesia_locker:release_tid(Tid),
+                transaction_terminated(Tid),
+                ?eval_debug_fun({?MODULE,do_commit,post},[{tid,Tid},{pid,nopid}]),
+                doit_loop(State#state{participants=
+                          gb_trees:delete(Tid,Participants)});
+            Pid when is_pid(Pid) ->
+                Pid ! {Tid, committed},
+                ?eval_debug_fun({?MODULE, do_commit, post}, [{tid, Tid}, {pid, Pid}]),
+                doit_loop(State)
+            end
+        end;
+
 
 	{Tid, do_commit} ->
 	    case gb_trees:lookup(Tid, Participants) of
@@ -583,12 +633,12 @@ recover_coordinator(Tid, Etabs) ->
 
 	    %% Recover locally
 	    CR = Prep#prep.records,
-	    {DiscNs, RamNs} = commit_nodes(CR, [], []),
+	    {DiscNs, RamNs, ExtNs} = commit_nodes(CR, [], [], []),
 	    case lists:keysearch(node(), #commit.node, CR) of
 		{value, Local} ->
 		    ?eval_debug_fun({?MODULE, recover_coordinator, pre},
 				    [{tid, Tid}, {outcome, Outcome}, {prot, Protocol}]),
-		    recover_coordinator(Tid, Protocol, Outcome, Local, DiscNs, RamNs),
+		    recover_coordinator(Tid, Protocol, Outcome, Local, lists:append(DiscNs, ExtNs), RamNs),
 		    ?eval_debug_fun({?MODULE, recover_coordinator, post},
 				    [{tid, Tid}, {outcome, Outcome}, {prot, Protocol}]);
 		false ->  %% When killed before store havn't been copied to
@@ -830,6 +880,8 @@ execute_transaction(Fun, Args, Factor, Retries, Type) ->
 apply_fun(Fun, Args, Type) ->
     Result = apply(Fun, Args),
     case t_commit(Type) of
+        {do_commit, Val} ->
+            {atomic, Val};
         do_commit ->
             {atomic, Result};
         do_commit_nested ->
@@ -1361,9 +1413,10 @@ multi_commit(read_only, _Maj = [], Tid, CR, _Store) ->
     %% This featherweight commit protocol is used when no
     %% updates has been performed in the transaction.
 
-    {DiscNs, RamNs} = commit_nodes(CR, [], []),
+    {DiscNs, RamNs, ExtNs} = commit_nodes(CR, [], [], []),
     Msg = {Tid, simple_commit},
     rpc:abcast(DiscNs -- [node()], ?MODULE, Msg),
+    rpc:abcast(ExtNs -- [node()], ?MODULE, Msg),
     rpc:abcast(RamNs -- [node()], ?MODULE, Msg),
     mnesia_recover:note_decision(Tid, committed),
     mnesia_locker:release_tid(Tid),
@@ -1399,44 +1452,76 @@ multi_commit(sym_trans, _Maj = [], Tid, CR, Store) ->
     %%    about the outcome, the transaction is aborted. If
     %%    somebody knows the outcome the others will follow.
 
-    {DiscNs, RamNs} = commit_nodes(CR, [], []),
-    Pending = mnesia_checkpoint:tm_enter_pending(Tid, DiscNs, RamNs),
+    {DiscNs, RamNs, ExtNs} = commit_nodes(CR, [], [], []),
+    Pending = mnesia_checkpoint:tm_enter_pending(Tid, lists:append(DiscNs, ExtNs), RamNs),
     ?ets_insert(Store, Pending),
 
-    {WaitFor, Local} = ask_commit(sym_trans, Tid, CR, DiscNs, RamNs),
-    {Outcome, []} = rec_all(WaitFor, Tid, do_commit, []),
+    {WaitFor, Local} = ask_commit(sym_trans, Tid, CR, lists:append(DiscNs, ExtNs), RamNs),
+    {OutcomeOthers, []} = rec_all(WaitFor, Tid, do_commit, []),
+
+    %% local validate
+    Outcome = case OutcomeOthers of 
+        do_commit ->
+            case do_valid(Tid, Local) of 
+                ok ->
+                    do_commit;
+                Err ->
+                    {do_abort, Err}
+            end;
+        DoOther ->
+            DoOther
+    end,
+    io:format("=====>mulit_commit FK ExtNs:~p~n", [ExtNs]),
     ?eval_debug_fun({?MODULE, multi_commit_sym},
 		    [{tid, Tid}, {outcome, Outcome}]),
+    WaitForNs = send_ext_commit(ExtNs-- [node()], Tid, Outcome),
+    io:format("=====>mulit_commit FK WaitForNs:~p~n", [WaitForNs]),
+    NsReturn = rec_ext_commit(WaitForNs, Tid, ok),
+    io:format("=====>mulit_commit FK res:~p~n", [NsReturn]),
     rpc:abcast(DiscNs -- [node()], ?MODULE, {Tid, Outcome}),
     rpc:abcast(RamNs -- [node()], ?MODULE, {Tid, Outcome}),
-    case Outcome of
+    Val = case Outcome of
     	do_commit ->
     	    mnesia_recover:note_decision(Tid, committed),
-    	    do_dirty(Tid, Local),
+    	    MyVal = do_dirty(Tid, Local),
     	    mnesia_locker:release_tid(Tid),
-    	    ?MODULE ! {delete_transaction, Tid};
+    	    ?MODULE ! {delete_transaction, Tid},
+            case MyVal of
+                ok ->
+                    NsReturn;
+                Oth ->
+                    Oth
+            end;
     	{do_abort, _Reason} ->
-    	    mnesia_recover:note_decision(Tid, aborted)
+    	    mnesia_recover:note_decision(Tid, aborted),
+            {error, abort}
     end,
     ?eval_debug_fun({?MODULE, multi_commit_sym, post},
 		    [{tid, Tid}, {outcome, Outcome}]),
-    Outcome;
+
+    case Outcome of
+        do_commit ->
+            {Outcome, Val};
+        _ ->
+            Outcome
+    end;
 
 multi_commit(sync_sym_trans, _Maj = [], Tid, CR, Store) ->
     %%   This protocol is the same as sym_trans except that it
     %%   uses syncronized calls to disk_log and syncronized commits
     %%   when several nodes are involved.
 
-    {DiscNs, RamNs} = commit_nodes(CR, [], []),
-    Pending = mnesia_checkpoint:tm_enter_pending(Tid, DiscNs, RamNs),
+    {DiscNs, RamNs, ExtNs} = commit_nodes(CR, [], [], []),
+    Pending = mnesia_checkpoint:tm_enter_pending(Tid, lists:append(DiscNs, ExtNs), RamNs),
     ?ets_insert(Store, Pending),
 
-    {WaitFor, Local} = ask_commit(sync_sym_trans, Tid, CR, DiscNs, RamNs),
+    {WaitFor, Local} = ask_commit(sync_sym_trans, Tid, CR, lists:append(DiscNs, ExtNs), RamNs),
     {Outcome, []} = rec_all(WaitFor, Tid, do_commit, []),
     ?eval_debug_fun({?MODULE, multi_commit_sym_sync},
 		    [{tid, Tid}, {outcome, Outcome}]),
     [?ets_insert(Store, {waiting_for_commit_ack, Node}) || Node <- WaitFor],
     rpc:abcast(DiscNs -- [node()], ?MODULE, {Tid, Outcome}),
+    rpc:abcast(ExtNs -- [node()], ?MODULE, {Tid, Outcome}),
     rpc:abcast(RamNs -- [node()], ?MODULE, {Tid, Outcome}),
     case Outcome of
 	do_commit ->
@@ -1566,6 +1651,39 @@ multi_commit(asym_trans, Majority, Tid, CR, Store) ->
 	    do_abort(Tid, Local),
 	    {do_abort, Reason}
     end.
+
+
+%%=====> begin for external mod
+
+send_ext_commit(ExtNs, Tid, Outcome) ->
+    send_ext_commit(ExtNs, Tid, Outcome, []).
+
+send_ext_commit([H | T], Tid, do_commit, ResNs)->
+    {?MODULE, H} ! {self(), {Tid, do_commit}},
+    send_ext_commit(T, Tid, do_commit, [ H | ResNs]);
+send_ext_commit([], Tid, do_commit, ResNs)->
+   ResNs;
+send_ext_commit(Ns, Tid, Outcome, ResNs)->
+    rpc:abcast(Ns -- [node()], ?MODULE, {Tid, Outcome}),
+    ResNs.
+
+
+rec_ext_commit([Node | Tail], Tid, Res) ->
+    receive
+    {?MODULE, Node, {Tid, ok}} ->
+        rec_ext_commit(Tail, Tid, Res);
+    {?MODULE, Node, {Tid, Val}} -> %% TODO
+        rec_ext_commit(Tail, Tid, Val);
+    {mnesia_down, Node} ->
+        %% Make sure that mnesia_tm knows it has died
+        %% it may have been restarted
+        Abort = {do_abort, {bad_commit, Node}},
+        catch {?MODULE, Node} ! {Tid, Abort},
+        rec_ext_commit(Tail, Tid, Abort)
+    end;
+rec_ext_commit([], _Tid, Res) ->
+    Res.
+ %%=====> end for external mod   
 
 %% Returns do_commit or {do_abort, Reason}
 rec_acc_pre_commit([Pid | Tail], Tid, Store, Commit, Res, DumperMode,
@@ -1789,6 +1907,7 @@ do_commit(Tid, C, DumperMode) ->
     mnesia_subscr:report_activity(Tid),
     R5.
 
+
 %% Update the items
 do_update(Tid, Storage, [Op | Ops], OldRes) ->
     case catch do_update_op(Tid, Storage, Op) of
@@ -1846,6 +1965,37 @@ do_update_op(Tid, Storage, {{Tab, Key}, Obj, delete_object}) ->
 do_update_op(Tid, Storage, {{Tab, Key}, Obj, clear_table}) ->
     commit_clear(?catch_val({Tab, commit_work}), Tid, Tab, Key, Obj),
     mnesia_lib:db_match_erase(Storage, Tab, Obj).
+
+
+
+do_valid(Tid, Bin) when is_binary(Bin) ->
+    do_valid(Tid, binary_to_term(Bin));
+do_valid(Tid, no_local) ->
+    ok;
+do_valid(Tid, C) ->
+    do_valid(Tid, external_copies, C#commit.external_copies, ok).
+
+
+%% valid the items
+do_valid(Tid, Storage, [Op | Ops], OldRes) ->
+    case catch do_valid_op(Tid, Storage, Op) of
+    ok ->
+        do_valid(Tid, Storage, Ops, OldRes);
+    {'EXIT', Reason} ->
+        verbose("do_valid in ~w failed: ~p -> {'EXIT', ~p}~n",
+            [Tid, Op, Reason]),
+        do_valid(Tid, Storage, Ops, OldRes);
+    NewRes ->
+        do_valid(Tid, Storage, Ops, NewRes)
+    end;
+do_valid(_Tid, _Storage, [], Res) ->
+    Res.
+
+do_valid_op(Tid, Storage, {{Tab, K}, Obj, write}) ->
+    mnesia_lib:db_valid(Storage, Tab, Obj);
+do_valid_op(_Tid, _Storage, _Op) -> 
+    ok.
+
 
 commit_write([], _, _, _, _, _) -> ok;
 commit_write([{checkpoints, CpList}|R], Tid, Tab, K, Obj, Old) ->
@@ -1927,16 +2077,19 @@ do_snmp(Tid, [Head | Tail]) ->
     end,
     do_snmp(Tid, Tail).
 
-commit_nodes([C | Tail], AccD, AccR)
+commit_nodes([C | Tail], AccD, AccR, AccE)
         when C#commit.disc_copies == [],
              C#commit.disc_only_copies  == [],
              C#commit.external_copies  == [],
              C#commit.schema_ops == [] ->
-    commit_nodes(Tail, AccD, [C#commit.node | AccR]);
-commit_nodes([C | Tail], AccD, AccR) ->
-    commit_nodes(Tail, [C#commit.node | AccD], AccR);
-commit_nodes([], AccD, AccR) ->
-    {AccD, AccR}.
+    commit_nodes(Tail, AccD, [C#commit.node | AccR] , AccE);
+commit_nodes([C | Tail], AccD, AccR, AccE) 
+        when  length(C#commit.external_copies)  /= 0 ->
+    commit_nodes(Tail, AccD, AccR, [C#commit.node | AccE]);        
+commit_nodes([C | Tail], AccD, AccR, AccE) ->
+    commit_nodes(Tail, [C#commit.node | AccD], AccR, AccE);
+commit_nodes([], AccD, AccR, AccE) ->
+    {AccD, AccR, AccE}.
 
 commit_decision(D, [C | Tail], AccD, AccR) ->
     N = C#commit.node,

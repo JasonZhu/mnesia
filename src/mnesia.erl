@@ -393,8 +393,9 @@ activity(Kind, Fun, Args, Mod) ->
 
 wrap_trans(State, Fun, Args, Retries, Mod, Kind) ->
     case transaction(State, Fun, Args, Retries, Mod, Kind) of
-	{atomic, GoodRes} -> GoodRes;
-	BadRes -> exit(BadRes)
+    	{atomic, GoodRes} -> GoodRes;
+        {aborted, Reason} -> Reason;
+    	BadRes -> exit(BadRes)
     end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
