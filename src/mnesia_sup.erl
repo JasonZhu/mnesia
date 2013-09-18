@@ -91,8 +91,15 @@ start_event() ->
     end.
 
 add_event_handler() ->
-    Handler = mnesia_monitor:get_env(event_module),
-    gen_event:add_handler(mnesia_event, Handler, []).
+       add_event_handler(mnesia_monitor:get_env(event_module)).
+    
+add_event_handler(Handler) when is_atom(Handler) ->
+    add_event_handler([Handler]);
+add_event_handler(Handlers) when is_list(Handlers) ->
+    lists:foreach(fun(Handler) -> 
+        gen_event:add_handler(mnesia_event, Handler, [])
+    end, Handlers).
+
     
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% debug functions
