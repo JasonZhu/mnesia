@@ -762,7 +762,7 @@ do_check_type(dump_log_load_regulation, B) -> bool(B);
 do_check_type(dump_log_time_threshold, I) when is_integer(I), I > 0 -> I;
 do_check_type(dump_log_update_in_place, B) -> bool(B);
 do_check_type(dump_log_write_threshold, I) when is_integer(I), I > 0 -> I;
-do_check_type(event_module, A) when is_atom(A); is_list(A) -> A;
+do_check_type(event_module, A) when is_atom(A);is_list(A) -> A;
 do_check_type(ignore_fallback_at_startup, B) -> bool(B);
 do_check_type(fallback_error_function, {Mod, Func})
   when is_atom(Mod), is_atom(Func) -> {Mod, Func};
